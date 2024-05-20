@@ -1,0 +1,990 @@
+---
+title: "Masters work"
+author: "Elizabeth Okello-113285"
+date: "2023-03-20"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Lets load the dependencies
+```{r}
+library(ggplot2)#for visualization
+library(forecast)#for forecasting
+library(dplyr)#for data manipulation
+library(tseries)#for timeseries analysis
+library(rugarch)#for ARCH/GARCH models
+library(e1071)
+library(FinTS)#to check for ARCH effects
+#require(forecast)
+#install.packages("PerformanceAnalytics")
+library(xts)
+library(quantmod)
+library(PerformanceAnalytics)
+library(vars)#for using VARS
+library(lmtest)#for bptest
+library(broom)#for table presentations
+library(zoo)
+library(strucchange)
+library(moments)
+library(astsa)
+library(tidyverse)
+```
+
+
+#Lets load the data
+```{r}
+profercy<-read.csv("C:/Users/spectre/OneDrive/Documents/time series content/profercy.csv",header=T,skip=3)
+profercy[,c("Week.No.","X")]<-list(NULL)#to drop the empty columns
+head(profercy)
+```
+#Lets get the structure of the data and check for missing values
+```{r}
+str(profercy)#to check the structure of the data
+sum(is.na(profercy))#to check for missing values
+```
+The data has 1254  missing values
+
+#Lets remove the missing values
+```{r}
+profercy.complete<-na.omit(profercy)#to remove missing values
+
+sum(is.na(profercy.complete))
+#View(profercy.complete)
+```
+#We have two ports of interest so lets subset each of them
+#our working variables will be the month.year and the port of Yuzhny so lets subset them
+```{r}
+yuz<-profercy.complete[,c("Month.Year","P.UREA.Yuzhny.FOB")]
+#View(yuz)
+str(yuz)
+```
+#Lets write it into a ts objects and visualise
+#port of  YUZ.
+```{r}
+yuzts<-ts(yuz[,2],start=c(2004,1),end=2018,frequency = 12)#TO write into a ts object
+
+plot(yuzts,xlab="Years",ylab="price")#to plot the ts object
+ggtsdisplay(yuzts)
+
+```
+From here we see a clear indication of non-stationarity in the ACF and a strong partial autocorrelation for the first two lags
+#Lets decompose the data for YUZ into its components
+```{r}
+dec<-decompose(yuzts)
+plot(dec)
+```
+From the decomposed time series seasonality and trend are present
+
+#Lets plot the acf and pacf before transforming the data
+```{r}
+acf(yuzts)#To plot acf 
+pacf(yuzts)#To plot pacf
+```
+
+This confirms that the data is non stationary
+```{r}
+print(kurtosis(yuzts))
+print(skewness(yuzts))
+sd(yuzts)
+```
+There is a mild skewness
+
+#Lets test for normalility
+```{r}
+shapiro.test(yuzts)#To test for normality
+```
+The p-value is less than 0.05 ie (p-value = 2.176e-05) and therefore we reject the null hypothesis and conclude that the distribution is significantly different from a normal distribution(not normally distributed)
+
+#Lets plot the histogram to check
+```{r}
+hist(yuzts)#To plot histogram
+```
+This reinforces our first result though not very far from normal. We may not transform it.
+
+#Lets test for stationarity for yuzts
+```{r}
+adf.test(yuzts, k=2)#we use the adf test to check for stationarity
+```
+From the above results the p-value(0.325) is greater than 0.05 we therefore fail to reject our null hypothesis and conclude that the data is non stationary.
+#Lets try a kpss test
+```{r}
+kpss.test(yuzts)
+```
+We reject the Null hypothesis that the data is stationary and conclude that the data is non stationary
+
+#Since seasonality is present lets take the seasonal diff
+```{r}
+yuz_diff12 = diff(yuzts,12)#difference to make it stationary and assign to variable name 
+par(mfrow=c(1,2))
+acf(yuz_diff12, 48)#To plot the acf of seasonal differenced data
+pacf(yuz_diff12, 48)#To plot the pacf of seasonal differenced data
+```
+
+#Lets evaluate for trend in the differenced data by decomposing the data
+```{r}
+dec2<-decompose(yuz_diff12)
+plot(dec2)
+```
+
+#Trend is still present so lets detrend the data as well
+```{r}
+diff1and12 = diff(yuz_diff12, 1) #To detrend the data
+par(mfrow=c(1,1))
+acf(diff1and12, 48)
+pacf(diff1and12, 48)
+plot(diff1and12)
+```
+
+#Lets check for stationarity first for the differenced data
+```{r}
+adf.test(diff1and12)
+kpss.test(diff1and12)
+pp.test(diff1and12)
+```
+All the tests show that the differenced data for both the seasonality and trend is now stationary
+
+#Lets split the data into to train and test set
+```{r}
+myts.train <- window(diff1and12, end=c(2016,12))
+myts.test <- window(diff1and12, start=2017)
+```
+#Lets check how the splitting has been done
+```{r}
+autoplot(diff1and12) +
+  autolayer(myts.train, series="Training") +
+  autolayer(myts.test, series="Test")
+```
+
+#Lets select the model using auto sarima on the whole data(before splitting)
+```{r}
+yuz_auto<-auto.arima(diff1and12,
+                 stepwise = F,
+                 approximation = F,
+                seasonal = T,
+                 allowdrift = F
+                 )
+#summary(yuz_auto)
+```
+
+#For the train data yuz
+
+```{r}
+yuz1_auto<-auto.arima(myts.train,
+                 stepwise = F,
+                 approximation = F,
+                 seasonal = T,
+                 allowdrift = F
+                 )#Use auto arima to automatically select the best model
+summary(yuz1_auto)
+```
+The split data train yields a low AIC
+
+#Lets use the model to forecast
+```{r}
+sarima.forecast<-forecast(yuz1_auto, h=12)
+plot(sarima.forecast)
+```
+
+```{r}
+SARIMA.accuracy<- accuracy(sarima.forecast,myts.test)
+```
+
+#Lets graph the results
+```{r}
+autoplot(yuzts) +
+  autolayer(sarima.forecast, series = "SARIMA Forecast") +
+  autolayer(myts.test, series = "Actual PRICES")
+```
+
+The SARIMA model has forecasted farely well. however from the residuals we see heteroskedasticity. So we take the residuals to the GARCH as long as they pass the ARCH test
+#Letsextract sarima residuals for the train set
+```{r}
+yuz1_auto_residuals <- residuals(yuz1_auto)
+```
+#Lets test the sarima residuals for arch effects on the train set
+```{r}
+ArchTest(yuz1_auto_residuals)
+ArchTest(yuz1_auto_residuals^2)
+```
+The squared residuals pass the ARCH effects test
+
+
+#Lets assign the squared residuals into a variable name
+```{r}
+re<-yuz1_auto_residuals^2
+```
+
+#Lets split the residuals into test and train and fit a GARCH model on them
+#Lets split the residuals into to train and test set
+```{r}
+re.train <- window(re, end=c(2015,12))
+re.test <- window(re, start=2016)
+```
+#Lets check how the splitting has been done
+```{r}
+autoplot(re) +
+  autolayer(re.train, series="Training") +
+  autolayer(re.test, series="Test")
+```
+
+
+#Lets fit the garch model using the residuals
+```{r}
+garch_spec <- ugarchspec(variance.model = list(model = "gjrGARCH"), 
+                         mean.model = list(armaOrder = c(0,0)),
+                         distribution.model = "sstd") # Define GARCH specification
+garch_fit <- ugarchfit(spec = garch_spec, data = re.train)
+garch_fit
+```
+
+#Letsforecast
+```{r}
+hybrid_model <- ugarchforecast(garch_fit, n.ahead = length(myts.train))
+#plot(hybrid_model)
+#garch_sigma <- ugarchforecast(garch_fit, n.ahead = length(myts.train))
+#garch_sigma
+```
+
+
+
+```{r}
+#forecast_results <- forecast(hybrid_model, h = 12)
+#forecast_result
+```
+
+
+
+
+
+
+```{r}
+
+
+# Evaluate model performance
+forecast_values <- as.numeric(hybrid_model@forecast$seriesFor)
+accuracy <- accuracy(forecast_values, myts.test) # Use accuracy function to calculate forecast accuracy
+print(accuracy) # Print forecast accuracy
+```
+
+
+```{r}
+# Make forecasts
+forecast_values <- as.numeric(hybrid_model@forecast$sigmaFor) # Extract forecasted values
+forecast_values
+
+```
+```{r}
+# Visualize forecast
+# Convert forecasted values to data frame
+forecast_df <- data.frame(Date = time(myts.train), Forecast = forecast_values)
+# Plot forecast
+ggplot() +
+  geom_line(data = data.frame(Date = time(myts.train), Value = forecast_values), aes(x = Date, y = Value), color = "black", linetype = "solid") +
+  geom_line(data = forecast_df, aes(x = Date, y = Forecast), color = "blue", linetype = "dashed") +
+  labs(title = "Hybrid SARIMA-GARCH Forecast",
+       x = "Date",
+       y = "Value") +
+  theme_minimal()
+```
+
+
+```{r}
+autoplot(residuals(yuz1_auto)) # plot the residuals 
+plot(yuz1_auto) # inspect the roots  
+ggAcf(residuals(yuz1_auto),lag.max=36) # inspect the ACF 
+ggPacf(residuals(yuz1_auto),lag.max=36) # inspect the PACF 
+Box.test(residuals(yuz1_auto), lag=24, type="Ljung-Box")
+```
+
+
+```{r}
+autoplot(residuals(yuz_auto)) # plot the residuals 
+plot(yuz_auto) # inspect the roots  
+ggAcf(residuals(yuz_auto),lag.max=36) # inspect the ACF 
+ggPacf(residuals(yuz_auto),lag.max=36) # inspect the PACF 
+Box.test(residuals(yuz_auto), lag=24, type="Ljung-Box")
+```
+The Ljung-Box test uses the following hypotheses:
+
+H0: The residuals are independently distributed.
+
+HA: The residuals are not independently distributed; they exhibit serial correlation.
+
+
+From the Box-Ljung test the p-value(0.2094) is greater than 0.05 and therefore fail to reject the null hypothesis and conclude that the residuals are independent
+
+
+#Lets use the model to forecast
+```{r}
+fcst<-forecast(yuz_auto, n.ahead=12)
+plot(fcst)
+```
+
+
+
+#Lets fit the first model
+```{r}
+fit1_yuz<-sarima(yuzts, 1,1,0,2,1,0,S=1,details = T,Model = T)
+fit1_yuz
+#fc <- snaive(myts.train)
+#accuracy(fc,myts.test)
+```
+#Interpretations of the Diagnostics
+The time series plot of the standardized residuals mostly indicates that there's no trend in the residuals, no outliers, and in general, no changing variance across time.
+
+The ACF of the residuals shows some significant autocorrelations as there are significant spikes at various lags (lags 8, 9)Not a very good result
+
+The Q-Q plot is a normal probability plot. It doesn't look too bad, so the assumption of normally distributed residuals looks okay.
+
+The bottom plot gives p-values for the Ljung-Box-Pierce statistics for each lag up to 20 lags. Several values of the Ljung-Box-Pierce p-values are below .05. We don't want them there. So, the Seasonal(1,1,0,2,0,0,12) is a good model but may not be the best. We make this better by fitting a GARCH model on the residuals.
+
+
+
+#Lets check residuals of the forecast
+```{r}
+checkresiduals(fcst)
+```
+
+
+
+
+
+#Lets Make Forecasts
+```{r}
+pred_model<- arima(yuzts, order=c(1,1,0), seasonal = c(2,1,0))# The sarima model
+#themodel = arima(flow, order = c(1,0,0), seasonal = list(order = c(0,1,1), period = 12))
+
+predict(pred_model, n.ahead=24)
+plot(pred_model$residuals)
+#resid(pred_model)
+
+```
+
+#Lets fit a garch. Lets assign the residuals to a variable name and write them to a ts object
+```{r}
+yts<-ts(resid(pred_model)^2)#write to a ts object and assign to a variable name
+ytss<-as.numeric(resid(pred_model)^2)
+YTs<-ts(ytss)
+s<-rep(1:169)
+s
+final<-cbind(s,YTs)
+View(final)
+#View(final)
+plot.ts(YTs)
+hist(YTs)
+hist(resid(pred_model))
+adf.test(YTs)
+#plot(abs(YTs))
+qqnorm(YTs, main = "Squared resids -QQ Plot", col = "blue")
+qqline(YTs)
+View(YTs)
+```
+#The squared residuals are stationary as we reject the null hyp and conclude that the data is stationary
+#From the histogram we conclude that the squared residuals are non normal
+```{r}
+shapiro.test(YTs)
+```
+The p-value is less than 0.05 ie (p-value = 2.2e-16) and therefore we reject the null hypothesis and conclude that the distribution is significantly different from a normal distribution(not normally distributed)
+
+```{r}
+#library(forecast)
+#pred_vals<- forecast(pred_model, level=c(95), h=24)
+#plot(pred_vals)
+#pred_vals
+#plot(fitted(pred_vals),pred_vals)
+```
+
+#Lets plot the acf and pacf of the squared residuals
+```{r}
+par(mfrow=c(1,2))
+acf(YTs)
+pacf(YTs)
+```
+
+
+#Lets test for ARCH effect son the squared residuals of YUZ
+
+#Arch test of model residuals
+
+```{r}
+
+ArchTest(resid(pred_model))#Test for arch effect on residuals
+ArchTest(YTs)#Test for arch effects on the squared residuals
+```
+
+Arch effects are present in the squared residuals but not in the residuals.
+We therefore proceed to to fit a GARCH model on the residuals.
+
+# GARCH Model specification
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="eGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+yfit <- ugarchfit(spec, data=re.train,solver = "hybrid")
+show(yfit)
+myforecast<-ugarchforecast(yfit, n.head=50)
+#Lets graph this result
+Plot.Garch = ts(fitted(myforecast), start = c(2014), frequency = 12)
+#re.train <- window(re, end=c(2015,12))
+#re.test <- window(re, start=2016)
+autoplot(re) +
+  autolayer(Plot.Garch, series = "Garch Forecast") +
+  autolayer(re.test, series = "Actual price")
+#show(myfit)
+
+```
+##lets extract the residuals of the fitted model
+```{r}
+#yres = residuals(yfit)
+#acf(yres)
+#pacf(yres)
+```
+
+#Volatility forecast
+```{r}
+#f<-ugarchforecast(fitORspec=yfit,n.head=24)
+#f
+#plot(fitted(f))
+#plot(sigma(f))
+
+```
+
+
+
+```{r}
+#plot(YTs$yuzforecast)
+# Plot forecasts and test set
+#autoplot(yuzforecast) + autolayer(a2)
+#plot(yuzforecast)
+```
+#Lets adjust the distribution to a normal distrib but use the same model
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="eGARCH",garchOrder= c(1,1)),
+                  distribution.model = "snorm",)
+yfit1 <- ugarchfit(spec, data=re.train,solver = "hybrid")
+show(yfit1)
+```
+
+#
+```{r}
+#plot(yfit1,which="all")
+
+```
+
+#Lets find other available  gjrGARCH model using sstd distribution
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="gjrGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+yfit_2 <- ugarchfit(spec, re.train,solver = "hybrid")
+show(yfit_2)
+```
+#Lets find other available  gjrGARCH model using normal distribution
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="gjrGARCH",garchOrder= c(1,1)),
+                  distribution.model = "snorm",)
+yfit_3 <- ugarchfit(spec, YTs,solver = "hybrid")
+show(yfit_3)
+
+```
+
+#Lets find other available  sGARCH models
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="sGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+yfit_4 <- ugarchfit(spec, re.train,solver = "hybrid")
+yfit_4
+#summary(yfit_4)
+#cond_mean <- as.numeric(fitted(yfit_4))
+#cond_var <- as.numeric(sigma(yfit_4)^2)
+```
+
+
+
+
+```{r}
+# Calculate predictions for testing set
+yfit4forecast<-ugarchforecast(yfit_4, n.ahead = length(re.test))
+yfit4forecast
+
+# Calculate AIC
+#aic<-uGARCHfit(AIC(yfit_4))
+
+# Calculate RMSE
+rmse <- sqrt(mean((yfit4forecast$mean - re.test)^2))
+
+# Calculate MAPE
+mape <- mean(abs((yfit4forecast$mean - re.test)/re.test)) * 100
+
+# Calculate MAE
+mae <- mean(abs(garch_predict$mean - test))
+```
+
+
+
+
+
+
+#Lets diagnose our model
+
+```{r}
+#residuals(yfit_4)
+yfit4res<-residuals(yfit_4)
+acf(yfit4res)
+acf(yfit4res^2)
+```
+```{r}
+plot(yfit_4,which="all")
+```
+
+```{r}
+
+data_plot <- data.frame(date = index(s), 
+                        original_data = coredata(YTs), 
+                        conditional_mean = cond_mean, 
+                        conditional_var = cond_var)
+
+ggplot(data_plot, aes(x = date)) +
+  geom_line(aes(y = original_data), color = "blue") +
+  geom_line(aes(y = conditional_mean), color = "red") +
+  geom_ribbon(aes(ymin = conditional_mean - sqrt(conditional_var), 
+                  ymax = conditional_mean + sqrt(conditional_var)), 
+              alpha = 0.2, fill = "gray") +
+  labs(title = "Time Series Plot with SARIMA-GARCH Conditional Mean and Conditional Variance", 
+       y = "Value", 
+       color = "Legend") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+```{r}
+par(mfrow=c(1,1))
+cond_volatility <- sigma(yfit_4)
+mean_model_fit <- fitted(yfit_4)
+p <- plot.xts(YTs, col = "grey")
+p <- addSeries(mean_model_fit, col = 'red', on = 1)
+p <- addSeries(cond_volatility, col = 'blue', on = 1)
+p
+#plotlist<- list(p1,p2,p3)
+#plot(plotlist)
+#plot(x, y1, type='l')
+```
+
+
+#volatility forecast
+```{r}
+fct<-ugarchforecast(fitORspec=yfit_4,n.head=12)
+#plot(fct)
+plot(fitted(fct))
+plot(sigma(fct))
+
+
+```
+
+
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="sGARCH",garchOrder= c(1,1)),
+                  distribution.model = "snorm",)
+yfit_5 <- ugarchfit(spec, YTs,solver = "hybrid")
+show(yfit_5)
+```
+
+#
+```{r}
+#plot(yfit4,which="all")
+
+```
+#Lets try the Assymetric Power ARCH with sstd distribution
+
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="apARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+yfit_6 <- ugarchfit(spec, YTs,solver = "hybrid")
+show(yfit_6)
+```
+
+#Lets try the Assymetric Power ARCH with normal distribution
+
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="apARCH",garchOrder= c(1,1)),
+                  distribution.model = "norm",)
+yfit_7 <- ugarchfit(spec, YTs,solver = "hybrid")
+show(yfit_7)
+```
+
+
+
+#From the soft ware there are extensions of GARCH that were declared not suitable choices namely Threshold GARCH, Generalized Quadratic GARCH 
+
+#our working variables will be the month.year and the port of Yuzhny so lets subset them
+```{r}
+gulf<-profercy.complete[,c("Month.Year","P.UREA.Arab.Gulf.FOB")]
+summary(gulf)
+#View(gulf)
+```
+
+#Lets write it into a ts object and visualise
+#PORT OF GULF
+```{r}
+gulfts<-ts(gulf[,2],start=c(2004,1),end=2018,frequency = 12)
+plot(gulfts,xlab="Years",ylab="price")#to plot the ts object
+#abline(reg=lm(gulfts~time(gulfts)))#to insert trend line
+ggtsdisplay(gulfts)
+```
+
+
+#Lets decompose the data for YUZ into its components
+```{r}
+dec<-decompose(gulfts)#to decompose the data
+plot(dec)
+```
+
+
+#Lets test for normalility for gulf ts
+```{r}
+shapiro.test(gulfts)#To test for normality
+```
+The data is not normal since the p-value is less than 0.05(5.084e-08) so we reject the null hypothesis and conclude that the data does not follow a normal distribution
+
+#Lets plot the histogram
+```{r}
+hist(gulfts)
+
+```
+The histogram confirms that indeed the data is not normal
+
+```{r}
+print(kurtosis(gulfts))
+print(skewness(gulfts))
+print(sd(gulfts))
+library(psych)
+#describe(gulfts)
+```
+#Lets check for outliers
+```{r}
+gulf<-profercy.complete[,c("Month.Year","P.UREA.Arab.Gulf.FOB")]
+gulf_overall_outlier <- gulf
+dim(gulf_overall_outlier)
+
+##  Removing outliers
+
+Q1 <- quantile(gulf_overall_outlier$P.UREA.Arab.Gulf.FOB, .25)
+Q3 <- quantile(gulf_overall_outlier$P.UREA.Arab.Gulf.FOB, .75)
+IQR <- IQR(gulf_overall_outlier$P.UREA.Arab.Gulf.FOB)
+
+no_outliers <- subset(gulf_overall_outlier, gulf_overall_outlier$P.UREA.Arab.Gulf.FOB > (Q1 - 1.5*IQR) & gulf_overall_outlier$P.UREA.Arab.Gulf.FOB < (Q3 + 1.5*IQR))
+
+dim(no_outliers)
+View(no_outliers)
+```
+```{r}
+View(gulf_overall_outlier$P.UREA.Arab.Gulf.FOB)
+```
+
+
+```{r}
+cleangulfts<- ts(gulf_overall_outlier$P.UREA.Arab.Gulf.FOB,start=c(2004,1),end=2018,frequency = 12)
+shapiro.test(cleangulfts)
+skewness(cleangulfts)
+```
+
+
+#Transform the data by squaring
+```{r}
+hist(gulfts)
+hist(gulfts^2)
+describe(gulfts^2)
+skewness(gulfts^2)
+kurtosis(gulfts^2)
+qqnorm(diff(gulfts^2))
+qqnorm(diff(gulfts))
+```
+#other methods of transformation
+all other methods including the squaring worsen the skewness 
+```{r}
+describe(sqrt(gulfts))
+#head(guroot)
+describe(log(gulfts))
+describe(sin(gulfts))
+describe(1/gulfts)
+describe(gulfts^4)
+
+```
+
+#Lets test for stationarity
+```{r}
+adf.test(gulfts, k=2)#we use the adf test to check for stationarity
+shapiro.test(gulfts^2)
+```
+
+From the above results the p-value(0.6035) is greater than 0.05 we therefore fail to reject our null hypothesis and conclude that the data is non stationary.
+
+# lets take a seasonal difference
+```{r}
+gudiff12 = diff(gulfts,12)
+gdiff12 = diff(gulfts^2,12)#  difference to make the data stationary
+acf2(gdiff12, 48)
+acf(gudiff12, 48)
+```
+
+The acf2 command asks for information about 48 lags. On the basis of the ACF and PACF of the 12th differences, we identified an ARIMA(2,0,0)×(0,1,1)12 model as a possibility. 
+
+#Lets decompose to establish whether the trend is still present
+```{r}
+dec3<-decompose(gdiff12)
+plot(dec3)
+dec4<-decompose(gdiff12)
+plot(dec4)
+```
+Trend is still present so lets take the diff to detrend the data
+```{r}
+gudiff1and12 = diff(gudiff12, 1) 
+plot(gudiff1and12)
+gdiff1and12 = diff(gdiff12, 1) 
+plot(gdiff1and12)
+par(mfrow=c(1,2))
+acf(gdiff1and12, 48)
+pacf(gdiff1and12, 48)
+```
+#Lets test for stationarity
+```{r}
+adf.test(gdiff1and12)
+kpss.test(gdiff1and12)
+pp.test(gdiff1and12)
+```
+```{r}
+adf.test(gudiff1and12)
+kpss.test(gudiff1and12)
+pp.test(gudiff1and12)
+```
+
+
+
+#Lets select the model using non transformed auto sarima to keep away from any bias the reseacher may be having
+```{r}
+gugulf_auto<-auto.arima(gudiff1and12,
+                 stepwise = F,
+                 approximation = F,
+                 seasonal = T,
+                 allowdrift = F
+                 )
+summary(gugulf_auto)
+```
+The non transformed data gives a lower AIC meaning it fits the data best
+
+```{r}
+fores<-forecast(gugulf_auto, n.ahead=12)
+plot(fores)
+```
+
+
+
+#Lets select the model using auto sarima to keep away from any bias the reseacher may be having using transformed data
+```{r}
+gulf_auto<-auto.arima(gdiff1and12,
+                 stepwise = F,
+                 approximation = F,
+                 seasonal = T,
+                 allowdrift = F
+                 )
+summary(gulf_auto)
+
+
+```
+
+
+
+
+```{r}
+gupred_model<- arima(gulfts, order=c(2,1,0), seasonal = c(2,1,0))
+library(forecast)
+gupred_vals<- forecast(gupred_model, level=c(95), h=24)
+plot(gupred_vals)
+gupred_vals
+```
+```{r}
+#Checking the validity of the forecasts
+acf(gupred_vals$residuals)#To plot acf
+hist(gupred_vals$residuals)#To plot histogram
+Box.test(gupred_vals$residuals, lag=24, type="Ljung-Box")#To check for serial correlation
+
+```
+
+
+#Lets perform an ARCH test on the squared residuals
+```{r}
+ArchTest(gupred_vals$residuals)#To check for arch effects on the residuals
+ArchTest(gupred_vals$residuals^2)#To check for arch effects on the squared residuals
+```
+
+
+#We use auto arima search so that we  can keep away any bias that may lie with the researcher
+```{r}
+autoplot(residuals(gulf_auto)) # plot the residuals 
+plot(gulf_auto) # inspect the roots  
+ggAcf(residuals(gulf_auto),lag.max=36) # inspect the ACF 
+ggPacf(residuals(gulf_auto),lag.max=36) # inspect the PACF 
+```
+```{r}
+
+```
+
+
+#Lets fit this model
+```{r}
+fit1_gulf<-sarima(gulfts, 2,1,0,2,1,0,12)
+fit1_gulf
+```
+
+#Lets Make Forecasts
+```{r}
+gpred_model<- arima(gulfts^2, order=c(2,1,0), seasonal = c(2,1,0))
+library(forecast)
+gpred_vals<- forecast(gpred_model, level=c(95), h=24)
+plot(gpred_vals)
+gpred_vals
+
+```
+
+
+```{r}
+#Checking the validity of the forecasts
+acf(gpred_vals$residuals)#To plot acf
+hist(gpred_vals$residuals)#To plot histogram
+Box.test(gpred_vals$residuals, lag=24, type="Ljung-Box")#To check for serial correlation
+
+```
+#Lets perform an ARCH test on the squared residuals
+```{r}
+ArchTest(gpred_vals$residuals)#To check for arch effects on the residuals
+ArchTest(gpred_vals$residuals^2)#To check for arch effects on the squared residuals
+```
+The squared residuals pass the arch test so we proceed to fit a GARCH on the residuals
+
+```{r}
+gres<-c(gpred_vals$residuals^2)#to assign a variable name to the squared residuals
+#descriptive statistics for the residuals
+summary(gres)
+print(kurtosis(gres))
+print(skewness(gres))
+print(sd(gres))
+```
+
+#Lets write the residuals into a ts object
+```{r}
+gts<-ts(gres)
+plot(gts)
+hist(gts)
+acf(gts)
+pacf(gts)
+adf.test(gts)
+plot(abs(gts))
+qqnorm(gts, main = "Squared resids -QQ Plot", col = "blue")
+qqline(gts)
+
+```
+```{r}
+par(mfrow=c(1,2))
+acf(gts)
+pacf(gts)
+```
+
+
+
+#Lets specify the GARCH Model as it has ARCH effects in the residuals
+`
+#Lets estimate the various GARCH MODELS
+#EGARCH model with student  distribution
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="eGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+gufit <- ugarchfit(spec, data=gts, solver = "hybrid")
+show(gufit)
+```
+
+```{r}
+gures = residuals(fit)
+acf(gures)
+pacf(gures)
+```
+
+#Volatility forecast
+```{r}
+gu<-ugarchforecast(fitORspec=fit,n.head=24)
+plot(fitted(gu))
+plot(sigma(gu))
+
+```
+
+#Lets forecast
+```{r}
+gu<- ugarchforecast(fit,n.ahead = 24)
+gu
+```
+
+```{r}
+spec1 <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="eGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+fit_1 <- ugarchfit(spec1, data=gts, solver = "hybrid")
+show(fit_1)
+```
+#EGARCH model with skewed generalized error distribution distribution
+```{r}
+spec2 <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="eGARCH",garchOrder= c(1,1)),
+                  distribution.model = "snorm",)
+gufit2 <- ugarchfit(spec2, data=gts,solver = "hybrid")
+show(gufit2)
+```
+
+#Lets forecast
+```{r}
+f<- ugarchforecast(fit1,n.ahead = 24)
+f
+```
+
+
+
+
+
+#gjrGARCH with normal distribution
+```{r}
+
+spec3<-ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+variance.model=list(model="gjrGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd")
+gufit3<-ugarchfit(spec3,data=gts,solver= "hybrid")
+show(gufit3)
+```
+
+```{r}
+spec4 <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="sGARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+gufit4 <- ugarchfit(spec4, data=gts,solver = "hybrid")
+show(gufit4)
+```
+#Lets try the Assymetric Power ARCH with sstd distrib
+```{r}
+spec <- ugarchspec(mean.model = list(armaOrder = c(0,0), include.mean = T),
+                   variance.model=list(model="apARCH",garchOrder= c(1,1)),
+                  distribution.model = "sstd",)
+gufit5 <- ugarchfit(spec, gts,solver = "hybrid")
+show(gufit5)
+```
+
+
+
+
